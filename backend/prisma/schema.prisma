@@ -1,0 +1,161 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+   url      = env("DATABASE_URL")
+}
+
+enum RoleType {
+  ADMIN
+  STAFF
+  USER
+}
+
+enum OrgType {
+  CLINIC
+  OFFICE
+}
+
+enum AppointmentStatus {
+  BOOKED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum QueueStatus {
+  WAITING
+  CALLED
+  PAUSED
+}
+
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  password  String?
+  role      RoleType @default(USER)
+  googleId  String?  @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  staff       Staff?
+  appointments Appointment[]
+  history      History[]
+
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        RoleType @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("roles")
+}
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  type      OrgType
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  staff        Staff[]
+  departments  Department[]
+  appointments Appointment[]
+
+  @@map("organizations")
+}
+
+model Department {
+  id              String       @id @default(uuid())
+  name            String
+  organizationId  String
+  slotDuration    Int          // in minutes
+  maxAppointments Int
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id])
+  appointments Appointment[]
+
+  @@map("departments")
+}
+
+model Staff {
+  id             String   @id @default(uuid())
+  userId         String   @unique
+  organizationId String
+  position       String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  user         User         @relation(fields: [userId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+  appointments Appointment[]
+
+  @@map("staff")
+}
+
+model Appointment {
+  id             String            @id @default(uuid())
+  userId         String
+  departmentId   String
+  staffId        String?
+  organizationId String
+  date           DateTime
+  timeSlot       String
+  status         AppointmentStatus @default(BOOKED)
+  tokenNumber    Int?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  // Relations
+  user         User         @relation(fields: [userId], references: [id])
+  department   Department   @relation(fields: [departmentId], references: [id])
+  staff        Staff?       @relation(fields: [staffId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+  queue        Queue?
+
+  @@map("appointments")
+}
+
+model Queue {
+  id                String      @id @default(uuid())
+  appointmentId     String      @unique
+  status            QueueStatus @default(WAITING)
+  position          Int
+  estimatedWaitTime Int? // In minutes
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  // Relations
+  appointment Appointment @relation(fields: [appointmentId], references: [id])
+
+  @@map("queues")
+}
+
+model History {
+  id        String   @id @default(uuid())
+  action    String
+  userId    String
+  timestamp DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("history")
+}
