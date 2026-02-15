@@ -46,13 +46,14 @@ export const signup = async (req: Request, res: Response, next: NextFunction): P
         name,
         email,
         password: hashedPassword,
-        role: RoleType.USER, 
+        role: RoleType.USER, // Strictly enforced
       },
     });
 
-    const token = generateToken({ id: user.id, role: user.role });
-
-    res.status(201).json({ user: { id: user.id, name: user.name, email: user.email, role: user.role }, token });
+    res.status(201).json({ 
+      message: 'User registered successfully. Please log in.',
+      user: { id: user.id, name: user.name, email: user.email, role: user.role } 
+    });
   } catch (error) {
     next(error);
   }

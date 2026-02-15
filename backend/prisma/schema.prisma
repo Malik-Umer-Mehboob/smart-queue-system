@@ -44,11 +44,13 @@ model User {
   googleId  String?  @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  isDeleted Boolean  @default(false)
 
   // Relations
-  staff       Staff?
-  appointments Appointment[]
-  history      History[]
+  staff              Staff?
+  patientAppointments Appointment[] @relation("PatientAppointments")
+  bookedAppointments  Appointment[] @relation("BookedByAppointments")
+  history            History[]
 
   @@map("users")
 }
@@ -69,6 +71,7 @@ model Organization {
   type      OrgType
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  isDeleted Boolean  @default(false)
 
   // Relations
   staff        Staff[]
@@ -86,6 +89,7 @@ model Department {
   maxAppointments Int
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
+  isDeleted       Boolean      @default(false)
 
   // Relations
   organization Organization @relation(fields: [organizationId], references: [id])
@@ -112,7 +116,10 @@ model Staff {
 
 model Appointment {
   id             String            @id @default(uuid())
-  userId         String
+  userId         String?
+  patientName    String?
+  patientPhone   String?
+  bookedById     String
   departmentId   String
   staffId        String?
   organizationId String
@@ -122,9 +129,11 @@ model Appointment {
   tokenNumber    Int?
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
+  isDeleted      Boolean           @default(false)
 
   // Relations
-  user         User         @relation(fields: [userId], references: [id])
+  user         User?        @relation("PatientAppointments", fields: [userId], references: [id])
+  bookedBy     User         @relation("BookedByAppointments", fields: [bookedById], references: [id])
   department   Department   @relation(fields: [departmentId], references: [id])
   staff        Staff?       @relation(fields: [staffId], references: [id])
   organization Organization @relation(fields: [organizationId], references: [id])

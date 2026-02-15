@@ -1,22 +1,14 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 
+import { RoleType } from '@prisma/client';
+
 interface JwtPayload {
   id: string;
-  role: string;
+  role: RoleType;
 }
 
-declare global {
-  namespace Express {
-    interface User {
-      id: string;
-      role: string;
-    }
-    interface Request {
-      user?: User;
-    }
-  }
-}
+// Express user type is now handled in src/types/express.d.ts
 
 export const authenticateJWT = (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;

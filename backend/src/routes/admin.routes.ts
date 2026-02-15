@@ -13,13 +13,85 @@ router.post(
   adminController.createStaff
 );
 
-router.get(
-  '/test',
+// Organizations
+router.post(
+  '/organizations',
   authenticateJWT,
   authorizeRoles(RoleType.ADMIN),
-  (req, res) => {
-    res.json({ message: 'Admin access granted' });
-  }
+  adminController.createOrganization
+);
+
+router.get(
+  '/organizations',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  adminController.getAllOrganizations
+);
+
+router.delete(
+  '/organizations/:id',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  adminController.deleteOrganization
+);
+
+// Departments
+router.post(
+  '/departments',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  adminController.createDepartment
+);
+
+router.patch(
+  '/departments/:id',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  adminController.updateDepartment
+);
+
+router.delete(
+  '/departments/:id',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  adminController.deleteDepartment
+);
+
+// Appointments
+router.get(
+  '/appointments',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  adminController.getAllAppointments
+);
+
+router.post(
+  '/appointments/emergency',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  adminController.addEmergencyAppointment
+);
+
+// User Management
+router.get(
+  '/users',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  adminController.getAllUsers
+);
+
+router.patch(
+  '/users/:id/role',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  adminController.updateUserRole
+);
+
+router.delete(
+  '/users/:id',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  adminController.deleteUser
 );
 
 export default router;

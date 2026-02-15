@@ -8,7 +8,8 @@ passport.use(
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || "google-client-secret",
       callbackURL: "/api/auth/google/callback",
     },
-    async (accessToken, refreshToken, profile, done) => {
+    async (accessToken, refreshToken, profilePath, done) => {
+      const profile = profilePath as any;
       // Logic for handling the profile is in the controller callback
       // We just pass it through here
       return done(null, profile);
