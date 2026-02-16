@@ -23,6 +23,7 @@ enum OrgType {
 
 enum AppointmentStatus {
   BOOKED
+  SERVING
   COMPLETED
   CANCELLED
   NO_SHOW
@@ -93,6 +94,7 @@ model Department {
 
   // Relations
   organization Organization @relation(fields: [organizationId], references: [id])
+  staff        Staff[]
   appointments Appointment[]
 
   @@map("departments")
@@ -102,6 +104,7 @@ model Staff {
   id             String   @id @default(uuid())
   userId         String   @unique
   organizationId String
+  departmentId   String?  // Optional: staff can be assigned to specific department
   position       String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -109,6 +112,7 @@ model Staff {
   // Relations
   user         User         @relation(fields: [userId], references: [id])
   organization Organization @relation(fields: [organizationId], references: [id])
+  department   Department?  @relation(fields: [departmentId], references: [id])
   appointments Appointment[]
 
   @@map("staff")
@@ -127,6 +131,7 @@ model Appointment {
   timeSlot       String
   status         AppointmentStatus @default(BOOKED)
   tokenNumber    Int?
+  isEmergency    Boolean           @default(false)  // Highlight emergency patients
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
   isDeleted      Boolean           @default(false)

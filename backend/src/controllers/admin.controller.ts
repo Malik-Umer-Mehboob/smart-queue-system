@@ -3,7 +3,7 @@ import { Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcrypt';
 import { RoleType } from '@prisma/client';
 import prisma from '../lib/prisma';
-import { signupSchema, organizationSchema, departmentSchema, emergencyAppointmentSchema, updateRoleSchema } from '../utils/validation';
+import { signupSchema, organizationSchema, departmentSchema, emergencyAppointmentSchema, updateRoleSchema, createStaffSchema, updateStaffSchema, assignDepartmentSchema } from '../utils/validation';
 
 export const getAllUsers = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -73,13 +73,13 @@ export const deleteUser = async (req: Request, res: Response, next: NextFunction
 
 export const createStaff = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const parsed = signupSchema.safeParse(req.body);
+    const parsed = createStaffSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.format() });
       return;
     }
 
-    const { name, email, password } = parsed.data;
+    const { name, email, password, organizationId, departmentId, position } = parsed.data;
 
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
@@ -87,20 +87,55 @@ export const createStaff = async (req: Request, res: Response, next: NextFunctio
       return;
     }
 
+    // Verify organization exists
+    const org = await prisma.organization.findUnique({ where: { id: organizationId } });
+    if (!org || (org as any).isDeleted) {
+      res.status(404).json({ message: 'Organization not found or inactive' });
+      return;
+    }
+
+    // Verify department exists if provided
+    if (departmentId) {
+      const dept = await prisma.department.findUnique({ where: { id: departmentId } });
+      if (!dept || (dept as any).isDeleted || dept.organizationId !== organizationId) {
+        res.status(404).json({ message: 'Department not found, inactive, or does not belong to the specified organization' });
+        return;
+      }
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const user = await prisma.user.create({
-      data: {
-        name,
-        email,
-        password: hashedPassword,
-        role: RoleType.STAFF,
-      },
+    // Create user and staff in a transaction
+    const result = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          name,
+          email,
+          password: hashedPassword,
+          role: RoleType.STAFF,
+        },
+      });
+
+      const staff = await tx.staff.create({
+        data: {
+          userId: user.id,
+          organizationId,
+          departmentId: departmentId || null,
+          position: position || null,
+        },
+        include: {
+          user: { select: { id: true, name: true, email: true, role: true } },
+          organization: { select: { id: true, name: true, type: true } },
+          department: { select: { id: true, name: true } },
+        },
+      });
+
+      return staff;
     });
 
     res.status(201).json({ 
       message: 'Staff account created successfully',
-      user: { id: user.id, name: user.name, email: user.email, role: user.role } 
+      staff: result
     });
   } catch (error) {
     next(error);
@@ -217,17 +252,41 @@ export const deleteDepartment = async (req: Request, res: Response, next: NextFu
 // Appointment Management
 export const getAllAppointments = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const appointments = await prisma.appointment.findMany({
-      where: { isDeleted: false } as any,
-      include: {
-        user: { select: { id: true, name: true, email: true } },
-        bookedBy: { select: { id: true, name: true, email: true } },
-        organization: true,
-        department: true
-      } as any,
-      orderBy: { createdAt: 'desc' }
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 10;
+    const skip = (page - 1) * limit;
+    const filter = req.query.filter as string; // 'all' or 'admin_history'
+
+    let where: any = { isDeleted: false };
+
+    if (filter === 'admin_history') {
+        where.bookedBy = {
+            role: { in: [RoleType.ADMIN, RoleType.STAFF] }
+        };
+    }
+
+    const [appointments, total] = await Promise.all([
+        prisma.appointment.findMany({
+            where,
+            include: {
+                user: { select: { id: true, name: true, email: true } },
+                bookedBy: { select: { id: true, name: true, email: true, role: true } },
+                organization: true,
+                department: true
+            } as any,
+            orderBy: { createdAt: 'desc' },
+            skip,
+            take: limit
+        }),
+        prisma.appointment.count({ where })
+    ]);
+
+    res.json({
+        items: appointments,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit)
     });
-    res.json(appointments);
   } catch (error) {
     next(error);
   }
@@ -315,3 +374,254 @@ export const addEmergencyAppointment = async (req: Request, res: Response, next:
     next(error);
   }
 };
+
+export const cancelAppointment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    
+    const appointment = await prisma.appointment.findUnique({
+      where: { id }
+    });
+
+    if (!appointment || appointment.isDeleted) {
+      res.status(404).json({ message: 'Appointment not found' });
+      return;
+    }
+
+    const updatedAppt = await prisma.appointment.update({
+      where: { id },
+      data: { status: 'CANCELLED' }
+    });
+
+    const io = req.app.get('io');
+    if (io) {
+        io.emit('appointmentUpdated', updatedAppt);
+        io.emit('queueUpdate', { 
+            departmentId: updatedAppt.departmentId, 
+            organizationId: updatedAppt.organizationId, 
+            date: updatedAppt.date 
+        });
+    }
+
+    res.json({ message: 'Appointment cancelled successfully', appointment: updatedAppt });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ============ STAFF MANAGEMENT ============
+
+export const getAllStaff = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const staff = await prisma.staff.findMany({
+      where: {
+        user: {
+          isDeleted: false
+        }
+      },
+      include: {
+        user: { select: { id: true, name: true, email: true, role: true, createdAt: true } },
+        organization: { select: { id: true, name: true, type: true } },
+        department: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(staff);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getStaffById = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    
+    const staff = await prisma.staff.findUnique({
+      where: { id },
+      include: {
+        user: { select: { id: true, name: true, email: true, role: true, createdAt: true, isDeleted: true } },
+        organization: { select: { id: true, name: true, type: true } },
+        department: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!staff || staff.user.isDeleted) {
+      res.status(404).json({ message: 'Staff not found' });
+      return;
+    }
+
+    res.json(staff);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateStaff = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const parsed = updateStaffSchema.safeParse(req.body);
+    
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.format() });
+      return;
+    }
+
+    const { name, email, organizationId, departmentId, position } = parsed.data;
+
+    // Check if staff exists
+    const existingStaff = await prisma.staff.findUnique({
+      where: { id },
+      include: { user: true },
+    });
+
+    if (!existingStaff || existingStaff.user.isDeleted) {
+      res.status(404).json({ message: 'Staff not found' });
+      return;
+    }
+
+    // Check if email is being changed and if it's already in use
+    if (email && email !== existingStaff.user.email) {
+      const emailExists = await prisma.user.findUnique({ where: { email } });
+      if (emailExists) {
+        res.status(409).json({ message: 'Email already in use' });
+        return;
+      }
+    }
+
+    // Verify organization exists if being updated
+    if (organizationId) {
+      const org = await prisma.organization.findUnique({ where: { id: organizationId } });
+      if (!org || (org as any).isDeleted) {
+        res.status(404).json({ message: 'Organization not found or inactive' });
+        return;
+      }
+    }
+
+    // Verify department exists if being updated
+    if (departmentId !== undefined && departmentId !== null) {
+      const dept = await prisma.department.findUnique({ where: { id: departmentId } });
+      const targetOrgId = organizationId || existingStaff.organizationId;
+      if (!dept || (dept as any).isDeleted || dept.organizationId !== targetOrgId) {
+        res.status(404).json({ message: 'Department not found, inactive, or does not belong to the specified organization' });
+        return;
+      }
+    }
+
+    // Update user and staff in a transaction
+    const result = await prisma.$transaction(async (tx) => {
+      // Update user if name or email changed
+      if (name || email) {
+        await tx.user.update({
+          where: { id: existingStaff.userId },
+          data: {
+            ...(name && { name }),
+            ...(email && { email }),
+          },
+        });
+      }
+
+      // Update staff
+      const updatedStaff = await tx.staff.update({
+        where: { id },
+        data: {
+          ...(organizationId && { organizationId }),
+          ...(departmentId !== undefined && { departmentId }),
+          ...(position !== undefined && { position }),
+        },
+        include: {
+          user: { select: { id: true, name: true, email: true, role: true } },
+          organization: { select: { id: true, name: true, type: true } },
+          department: { select: { id: true, name: true } },
+        },
+      });
+
+      return updatedStaff;
+    });
+
+    res.json({
+      message: 'Staff updated successfully',
+      staff: result
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const assignStaffToDepartment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    const parsed = assignDepartmentSchema.safeParse(req.body);
+    
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.format() });
+      return;
+    }
+
+    const { departmentId } = parsed.data;
+
+    // Check if staff exists
+    const existingStaff = await prisma.staff.findUnique({
+      where: { id },
+      include: { user: true },
+    });
+
+    if (!existingStaff || existingStaff.user.isDeleted) {
+      res.status(404).json({ message: 'Staff not found' });
+      return;
+    }
+
+    // Verify department exists and belongs to staff's organization
+    if (departmentId) {
+      const dept = await prisma.department.findUnique({ where: { id: departmentId } });
+      if (!dept || (dept as any).isDeleted || dept.organizationId !== existingStaff.organizationId) {
+        res.status(404).json({ message: 'Department not found, inactive, or does not belong to staff\'s organization' });
+        return;
+      }
+    }
+
+    const updatedStaff = await prisma.staff.update({
+      where: { id },
+      data: { departmentId },
+      include: {
+        user: { select: { id: true, name: true, email: true, role: true } },
+        organization: { select: { id: true, name: true, type: true } },
+        department: { select: { id: true, name: true } },
+      },
+    });
+
+    res.json({
+      message: 'Staff department assignment updated successfully',
+      staff: updatedStaff
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deactivateStaff = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const id = req.params.id as string;
+    
+    // Check if staff exists
+    const staff = await prisma.staff.findUnique({
+      where: { id },
+      include: { user: true },
+    });
+
+    if (!staff || staff.user.isDeleted) {
+      res.status(404).json({ message: 'Staff not found' });
+      return;
+    }
+
+    // Soft delete the user (which cascades to staff access)
+    await prisma.user.update({
+      where: { id: staff.userId },
+      data: { isDeleted: true } as any
+    });
+
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+};
+

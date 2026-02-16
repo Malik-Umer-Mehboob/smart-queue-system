@@ -13,5 +13,6 @@ router.get('/departments/:id/available-slots', appointmentController.getAvailabl
 // User specific
 router.post('/', authenticateJWT, appointmentController.bookAppointment);
 router.get('/history', authenticateJWT, appointmentController.getUserAppointments);
+router.patch('/:id/cancel', authenticateJWT, appointmentController.cancelMyAppointment);
 
 export default router;

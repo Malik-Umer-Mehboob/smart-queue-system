@@ -72,6 +72,13 @@ router.post(
   adminController.addEmergencyAppointment
 );
 
+router.patch(
+  '/appointments/:id/cancel',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  adminController.cancelAppointment
+);
+
 // User Management
 router.get(
   '/users',
@@ -92,6 +99,42 @@ router.delete(
   authenticateJWT,
   authorizeRoles(RoleType.ADMIN),
   adminController.deleteUser
+);
+
+// Staff Management
+router.get(
+  '/staff',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  adminController.getAllStaff
+);
+
+router.get(
+  '/staff/:id',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  adminController.getStaffById
+);
+
+router.patch(
+  '/staff/:id',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  adminController.updateStaff
+);
+
+router.patch(
+  '/staff/:id/assign-department',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  adminController.assignStaffToDepartment
+);
+
+router.delete(
+  '/staff/:id',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  adminController.deactivateStaff
 );
 
 export default router;

@@ -12,6 +12,7 @@ import authRoutes from './routes/auth.routes';
 import userRoutes from './routes/user.routes';
 import adminRoutes from './routes/admin.routes';
 import appointmentRoutes from './routes/appointment.routes';
+import staffRoutes from './routes/staff.routes';
 
 const app: Express = express();
 const httpServer = createServer(app);
@@ -39,6 +40,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/appointments', appointmentRoutes);
+app.use('/api/staff', staffRoutes);
 
 app.get('/', (req: Request, res: Response) => {
   res.send('Smart Queue System Backend is running');

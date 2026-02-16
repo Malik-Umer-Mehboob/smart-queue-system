@@ -124,14 +124,17 @@ export const bookAppointment = async (req: Request, res: Response, next: NextFun
       return;
     }
 
-    const { organizationId, departmentId, date, timeSlot, patientName, patientPhone } = parsed.data;
+    const { organizationId, departmentId, date, timeSlot, patientName, patientPhone, userId: providedUserId, isEmergency: requestedEmergency } = parsed.data;
     const appointmentDate = new Date(date);
 
     // Logic: 
     // If it's a normal user booking for themselves -> req.user.role is USER
-    // If it's an admin booking manually -> req.user.role is ADMIN and may provide patientName/Phone
+    // If it's an admin booking manually -> req.user.role is ADMIN and may provide userId or patientName/Phone
     
-    let userId = req.user?.role === 'USER' ? bookedById : undefined;
+    let userId = req.user?.role === 'USER' ? bookedById : providedUserId;
+    
+    // Emergency Logic: Only ADMIN can set isEmergency
+    const isEmergency = req.user?.role === 'ADMIN' && requestedEmergency === true;
 
     // Restriction rule: One patient per department per date only.
     // If registered user (userId exists) -> check by userId
@@ -160,29 +163,34 @@ export const bookAppointment = async (req: Request, res: Response, next: NextFun
     }
 
     if (existing) {
+      // Exception: Emergency appointments might be allowed even if existing? 
+      // User prompt says "Can exceed slot capacity", doesn't explicitly say "Can have multiple bookings".
+      // But usually emergency is a unique event. Let's keep duplicate check for now to prevent accidental double clicks.
       res.status(400).json({ message: 'This patient already has an appointment with this department on this date' });
       return;
     }
 
-    // Verify slot availability
+    // Verify slot availability (Skip for Emergency)
     const dept = await prisma.department.findUnique({ where: { id: departmentId } });
     if (!dept || (dept as any).isDeleted) {
         res.status(404).json({ message: 'Department not found or inactive' });
         return;
     }
 
-    const count = await prisma.appointment.count({
-      where: {
-        departmentId,
-        date: appointmentDate,
-        timeSlot,
-        status: { not: 'CANCELLED' }
-      }
-    });
+    if (!isEmergency) {
+        const count = await prisma.appointment.count({
+          where: {
+            departmentId,
+            date: appointmentDate,
+            timeSlot,
+            status: { not: 'CANCELLED' }
+          }
+        });
 
-    if (count >= dept.maxAppointments) {
-      res.status(400).json({ message: 'Slot is no longer available' });
-      return;
+        if (count >= dept.maxAppointments) {
+          res.status(400).json({ message: 'Slot is no longer available' });
+          return;
+        }
     }
 
     // Generate Token (FIFO)
@@ -201,9 +209,12 @@ export const bookAppointment = async (req: Request, res: Response, next: NextFun
         organizationId,
         departmentId,
         date: appointmentDate,
-        timeSlot,
+        timeSlot: isEmergency ? "EMERGENCY" : timeSlot, // Optional: Label timeSlot as Emergency? Or keep selected.
+        // Keeping selected timeSlot is better for records, but `isEmergency` flag handles priority.
+        // Actually prompt says "Bypass slot availability". I will keep the selected timeSlot so we know when they *intended* to come or arrived.
         tokenNumber: newToken,
-        status: 'BOOKED'
+        status: 'BOOKED',
+        isEmergency
       } as any
     });
 
@@ -245,6 +256,52 @@ export const getUserAppointments = async (req: Request, res: Response, next: Nex
         });
 
         res.json(appointments);
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const cancelMyAppointment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const userId = req.user?.id;
+        const id = req.params.id as string;
+
+        if (!userId) {
+            res.status(401).json({ message: 'Unauthorized' });
+            return;
+        }
+
+        const appointment = await prisma.appointment.findUnique({
+            where: { id }
+        });
+
+        if (!appointment || appointment.userId !== userId) {
+            res.status(404).json({ message: 'Appointment not found or not owned by you' });
+            return;
+        }
+
+        if (appointment.status !== 'BOOKED') {
+            res.status(400).json({ message: 'Only booked appointments can be cancelled' });
+            return;
+        }
+
+        const updatedAppt = await prisma.appointment.update({
+            where: { id },
+            data: { status: 'CANCELLED' }
+        });
+
+        // Socket.IO emit update
+        const io = req.app.get('io');
+        if (io) {
+            io.emit('appointmentUpdated', updatedAppt);
+            io.emit('queueUpdate', { 
+                departmentId: updatedAppt.departmentId, 
+                organizationId: updatedAppt.organizationId, 
+                date: updatedAppt.date 
+            });
+        }
+
+        res.json({ message: 'Appointment cancelled successfully', appointment: updatedAppt });
     } catch (error) {
         next(error);
     }
