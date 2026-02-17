@@ -9,6 +9,7 @@ router.get('/organizations', appointmentController.getAllOrganizations);
 router.get('/organizations/:id/departments', appointmentController.getDepartmentsByOrg);
 router.get('/departments/:id/available-dates', appointmentController.getAvailableDates);
 router.get('/departments/:id/available-slots', appointmentController.getAvailableSlots);
+router.get('/departments/:id/doctors', appointmentController.getDoctorsByDepartment);
 
 // User specific
 router.post('/', authenticateJWT, appointmentController.bookAppointment);

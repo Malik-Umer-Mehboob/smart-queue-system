@@ -2,7 +2,10 @@ import { z } from 'zod';
 
 export const signupSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
-  email: z.string().email("Invalid email address"),
+  email: z.string().email("Invalid email address").refine(
+    (email) => email.trim().toLowerCase().endsWith('@gmail.com'),
+    { message: "Only Gmail accounts are allowed for patient registration." }
+  ),
   password: z.string().min(8, "Password must be at least 8 characters"),
 });
 
@@ -27,6 +30,7 @@ export const appointmentSchema = z.object({
   userId: z.string().optional(),
   organizationId: z.string().uuid("Invalid organization ID"),
   departmentId: z.string().uuid("Invalid department ID"),
+  doctorId: z.string().uuid("Invalid doctor ID"),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)"),
   timeSlot: z.string().min(1, "Time slot is required"),
   patientName: z.string().optional(),
@@ -38,6 +42,7 @@ export const emergencyAppointmentSchema = z.object({
   userId: z.string().optional(),
   organizationId: z.string().uuid("Invalid organization ID"),
   departmentId: z.string().uuid("Invalid department ID"),
+  doctorId: z.string().uuid("Invalid doctor ID"),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)"),
   timeSlot: z.string().min(1, "Time slot is required"),
   patientName: z.string().optional(),
@@ -51,7 +56,10 @@ export const updateRoleSchema = z.object({
 // Staff Management Schemas
 export const createStaffSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
-  email: z.string().email("Invalid email address"),
+  email: z.string().email("Invalid email address").refine(
+    (email) => email.trim().toLowerCase().endsWith('@yahoo.com'),
+    { message: "Staff accounts must use Yahoo email addresses." }
+  ),
   password: z.string().min(8, "Password must be at least 8 characters"),
   organizationId: z.string().uuid("Invalid organization ID"),
   departmentId: z.string().uuid("Invalid department ID").optional(),
@@ -78,5 +86,14 @@ export const updateAppointmentStatusSchema = z.object({
 export const queueFilterSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)").optional(),
   departmentId: z.string().uuid("Invalid department ID").optional(),
+  doctorId: z.string().uuid("Invalid doctor ID").optional(),
 });
 
+export const doctorSchema = z.object({
+  name: z.string().min(1, "Doctor name is required"),
+  email: z.string().email("Invalid email address").optional().nullable(),
+  specialization: z.string().optional().nullable(),
+  organizationId: z.string().uuid("Invalid organization ID"),
+  departmentId: z.string().uuid("Invalid department ID"),
+  isActive: z.boolean().optional(),
+});

@@ -110,7 +110,7 @@ export const createStaff = async (req: Request, res: Response, next: NextFunctio
       const user = await tx.user.create({
         data: {
           name,
-          email,
+          email: email.trim().toLowerCase(),
           password: hashedPassword,
           role: RoleType.STAFF,
         },
@@ -272,7 +272,8 @@ export const getAllAppointments = async (req: Request, res: Response, next: Next
                 user: { select: { id: true, name: true, email: true } },
                 bookedBy: { select: { id: true, name: true, email: true, role: true } },
                 organization: true,
-                department: true
+                department: true,
+                doctor: { select: { id: true, name: true, specialization: true } }
             } as any,
             orderBy: { createdAt: 'desc' },
             skip,
@@ -306,7 +307,7 @@ export const addEmergencyAppointment = async (req: Request, res: Response, next:
       return;
     }
 
-    const { userId, organizationId, departmentId, date, timeSlot, patientName, patientPhone } = parsed.data;
+    const { userId, organizationId, departmentId, doctorId, date, timeSlot, patientName, patientPhone } = parsed.data;
     
     // Check if user exists (if provided)
     let user = null;
@@ -332,10 +333,10 @@ export const addEmergencyAppointment = async (req: Request, res: Response, next:
       return;
     }
 
-    // Generate Token (FIFO)
     const appointmentDate = new Date(date);
+    // Generate Token (FIFO per doctor)
     const lastAppt = await prisma.appointment.findFirst({
-        where: { departmentId, date: appointmentDate },
+        where: { departmentId, doctorId, date: appointmentDate },
         orderBy: { tokenNumber: 'desc' }
     });
     const newToken = (lastAppt?.tokenNumber || 0) + 1;
@@ -348,17 +349,19 @@ export const addEmergencyAppointment = async (req: Request, res: Response, next:
         bookedById: bookedById as string,
         organizationId,
         departmentId,
+        doctorId,
         date: appointmentDate,
-        timeSlot,
+        timeSlot: 'EMERGENCY',
         tokenNumber: newToken,
-        status: 'BOOKED'
+        status: 'BOOKED',
+        isEmergency: true
       } as any
     });
 
     const io = req.app.get('io');
     if (io) {
         io.emit('newAppointment', appointment);
-        io.emit('queueUpdate', { departmentId, organizationId, date: appointmentDate });
+        io.emit('queueUpdate', { departmentId, organizationId, date: appointmentDate, doctorId });
     }
 
     // Send notification (simulated)

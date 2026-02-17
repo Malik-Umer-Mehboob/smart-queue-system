@@ -3,8 +3,45 @@ import { authenticateJWT } from '../middlewares/auth.middleware';
 import { authorizeRoles } from '../middlewares/role.middleware';
 import { RoleType } from '@prisma/client';
 import * as adminController from '../controllers/admin.controller';
+import * as doctorController from '../controllers/doctor.controller';
 
 const router = Router();
+
+// Doctors
+router.post(
+  '/doctors',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  doctorController.createDoctor
+);
+
+router.get(
+  '/doctors',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  doctorController.getAllDoctors
+);
+
+router.get(
+  '/doctors/:id',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  doctorController.getDoctorById
+);
+
+router.patch(
+  '/doctors/:id',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  doctorController.updateDoctor
+);
+
+router.delete(
+  '/doctors/:id',
+  authenticateJWT,
+  authorizeRoles(RoleType.ADMIN),
+  doctorController.deleteDoctor
+);
 
 router.post(
   '/create-staff',

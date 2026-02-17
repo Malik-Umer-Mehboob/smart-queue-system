@@ -53,10 +53,15 @@ export const getAvailableDates = async (req: Request, res: Response, next: NextF
 export const getAvailableSlots = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const departmentId = req.params.id as string;
-    const { date } = req.query;
+    const { date, doctorId } = req.query;
 
     if (!date || typeof date !== 'string') {
         res.status(400).json({ message: 'Date is required' });
+        return;
+    }
+
+    if (!doctorId || typeof doctorId !== 'string') {
+        res.status(400).json({ message: 'Doctor ID is required' });
         return;
     }
 
@@ -70,7 +75,7 @@ export const getAvailableSlots = async (req: Request, res: Response, next: NextF
     }
 
     // Generate slots based on slotDuration and work hours (e.g., 9-5)
-    // and filter out already booked slots
+    // and filter out already booked slots for the specific doctor
     const slots = [];
     const startHour = 9;
     const endHour = 17;
@@ -82,10 +87,11 @@ export const getAvailableSlots = async (req: Request, res: Response, next: NextF
     while (current < end) {
       const timeSlot = current.toTimeString().substring(0, 5);
       
-      // Check count for this slot
+      // Check count for this slot for the specific doctor
       const count = await prisma.appointment.count({
         where: {
           departmentId,
+          doctorId,
           date: new Date(date),
           timeSlot,
           status: { not: 'CANCELLED' },
@@ -97,6 +103,12 @@ export const getAvailableSlots = async (req: Request, res: Response, next: NextF
             timeSlot,
             available: true,
             remaining: dept.maxAppointments - count
+        });
+      } else {
+        slots.push({
+            timeSlot,
+            available: false,
+            remaining: 0
         });
       }
 
@@ -124,7 +136,7 @@ export const bookAppointment = async (req: Request, res: Response, next: NextFun
       return;
     }
 
-    const { organizationId, departmentId, date, timeSlot, patientName, patientPhone, userId: providedUserId, isEmergency: requestedEmergency } = parsed.data;
+    const { organizationId, departmentId, doctorId, date, timeSlot, patientName, patientPhone, userId: providedUserId, isEmergency: requestedEmergency } = parsed.data;
     const appointmentDate = new Date(date);
 
     // Logic: 
@@ -136,9 +148,9 @@ export const bookAppointment = async (req: Request, res: Response, next: NextFun
     // Emergency Logic: Only ADMIN can set isEmergency
     const isEmergency = req.user?.role === 'ADMIN' && requestedEmergency === true;
 
-    // Restriction rule: One patient per department per date only.
-    // If registered user (userId exists) -> check by userId
-    // If manual booking (patientName + patientPhone exists) -> check by name+phone
+    // Restriction rule: One patient per department per date only. (Or per doctor?)
+    // Request says "System still maintains: Slot availability per doctor", "Token generation per doctor".
+    // Usually, you can't be in two queues for the same department at the same time.
     
     let existing = null;
     if (userId) {
@@ -158,16 +170,23 @@ export const bookAppointment = async (req: Request, res: Response, next: NextFun
                 departmentId,
                 date: appointmentDate,
                 status: { not: 'CANCELLED' }
-            } as any
+            }
         });
     }
 
     if (existing) {
-      // Exception: Emergency appointments might be allowed even if existing? 
-      // User prompt says "Can exceed slot capacity", doesn't explicitly say "Can have multiple bookings".
-      // But usually emergency is a unique event. Let's keep duplicate check for now to prevent accidental double clicks.
       res.status(400).json({ message: 'This patient already has an appointment with this department on this date' });
       return;
+    }
+
+    // Verify doctor existence and assignment to department
+    const doctor = await (prisma as any).doctor.findFirst({
+        where: { id: doctorId, departmentId, isDeleted: false, isActive: true }
+    });
+
+    if (!doctor) {
+        res.status(404).json({ message: 'Doctor not found in this department or inactive' });
+        return;
     }
 
     // Verify slot availability (Skip for Emergency)
@@ -181,6 +200,7 @@ export const bookAppointment = async (req: Request, res: Response, next: NextFun
         const count = await prisma.appointment.count({
           where: {
             departmentId,
+            doctorId,
             date: appointmentDate,
             timeSlot,
             status: { not: 'CANCELLED' }
@@ -188,14 +208,14 @@ export const bookAppointment = async (req: Request, res: Response, next: NextFun
         });
 
         if (count >= dept.maxAppointments) {
-          res.status(400).json({ message: 'Slot is no longer available' });
+          res.status(400).json({ message: 'Slot is no longer available for this doctor' });
           return;
         }
     }
 
-    // Generate Token (FIFO)
+    // Generate Token (FIFO per doctor)
     const lastAppt = await prisma.appointment.findFirst({
-        where: { departmentId, date: appointmentDate },
+        where: { departmentId, doctorId, date: appointmentDate },
         orderBy: { tokenNumber: 'desc' }
     });
     const newToken = (lastAppt?.tokenNumber || 0) + 1;
@@ -208,10 +228,9 @@ export const bookAppointment = async (req: Request, res: Response, next: NextFun
         bookedById: bookedById as string,
         organizationId,
         departmentId,
+        doctorId,
         date: appointmentDate,
-        timeSlot: isEmergency ? "EMERGENCY" : timeSlot, // Optional: Label timeSlot as Emergency? Or keep selected.
-        // Keeping selected timeSlot is better for records, but `isEmergency` flag handles priority.
-        // Actually prompt says "Bypass slot availability". I will keep the selected timeSlot so we know when they *intended* to come or arrived.
+        timeSlot: isEmergency ? "EMERGENCY" : timeSlot,
         tokenNumber: newToken,
         status: 'BOOKED',
         isEmergency
@@ -222,7 +241,7 @@ export const bookAppointment = async (req: Request, res: Response, next: NextFun
     const io = req.app.get('io');
     if (io) {
         io.emit('newAppointment', appointment);
-        io.emit('queueUpdate', { departmentId, organizationId, date: appointmentDate });
+        io.emit('queueUpdate', { departmentId, organizationId, date: appointmentDate, doctorId });
     }
 
     // Send notification (simulated)
@@ -250,12 +269,39 @@ export const getUserAppointments = async (req: Request, res: Response, next: Nex
             where: { userId, isDeleted: false } as any,
             include: {
                 organization: true,
-                department: true
-            },
+                department: true,
+                doctor: {
+                    select: {
+                        id: true,
+                        name: true,
+                        specialization: true
+                    }
+                }
+            } as any,
             orderBy: { createdAt: 'desc' }
         });
 
         res.json(appointments);
+    } catch (error) {
+        next(error);
+    }
+};
+
+// Fetch all doctors in a department
+export const getDoctorsByDepartment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+        const departmentId = req.params.id as string;
+        
+        const doctors = await (prisma as any).doctor.findMany({
+            where: { 
+                departmentId, 
+                isDeleted: false,
+                isActive: true
+            },
+            orderBy: { name: 'asc' }
+        });
+
+        res.json(doctors);
     } catch (error) {
         next(error);
     }
@@ -297,7 +343,8 @@ export const cancelMyAppointment = async (req: Request, res: Response, next: Nex
             io.emit('queueUpdate', { 
                 departmentId: updatedAppt.departmentId, 
                 organizationId: updatedAppt.organizationId, 
-                date: updatedAppt.date 
+                date: updatedAppt.date,
+                doctorId: updatedAppt.doctorId
             });
         }
 

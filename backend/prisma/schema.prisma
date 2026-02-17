@@ -78,6 +78,7 @@ model Organization {
   staff        Staff[]
   departments  Department[]
   appointments Appointment[]
+  doctors      Doctor[]
 
   @@map("organizations")
 }
@@ -96,8 +97,29 @@ model Department {
   organization Organization @relation(fields: [organizationId], references: [id])
   staff        Staff[]
   appointments Appointment[]
+  doctors      Doctor[]
 
   @@map("departments")
+}
+
+model Doctor {
+  id             String   @id @default(uuid())
+  name           String
+  email          String?
+  specialization String?
+  organizationId String
+  departmentId   String
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  isDeleted      Boolean  @default(false)
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id])
+  department   Department   @relation(fields: [departmentId], references: [id])
+  appointments Appointment[]
+
+  @@map("doctors")
 }
 
 model Staff {
@@ -113,7 +135,6 @@ model Staff {
   user         User         @relation(fields: [userId], references: [id])
   organization Organization @relation(fields: [organizationId], references: [id])
   department   Department?  @relation(fields: [departmentId], references: [id])
-  appointments Appointment[]
 
   @@map("staff")
 }
@@ -125,7 +146,7 @@ model Appointment {
   patientPhone   String?
   bookedById     String
   departmentId   String
-  staffId        String?
+  doctorId       String
   organizationId String
   date           DateTime
   timeSlot       String
@@ -140,7 +161,7 @@ model Appointment {
   user         User?        @relation("PatientAppointments", fields: [userId], references: [id])
   bookedBy     User         @relation("BookedByAppointments", fields: [bookedById], references: [id])
   department   Department   @relation(fields: [departmentId], references: [id])
-  staff        Staff?       @relation(fields: [staffId], references: [id])
+  doctor       Doctor       @relation(fields: [doctorId], references: [id])
   organization Organization @relation(fields: [organizationId], references: [id])
   queue        Queue?
 

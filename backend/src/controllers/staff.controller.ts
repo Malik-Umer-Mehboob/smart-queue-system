@@ -31,7 +31,7 @@ export const getAssignedQueue = async (req: Request, res: Response, next: NextFu
       return;
     }
 
-    const { date, departmentId } = parsed.data;
+    const { date, departmentId, doctorId } = parsed.data;
     const queryDate = date ? new Date(date) : new Date();
     queryDate.setHours(0, 0, 0, 0);
 
@@ -47,11 +47,15 @@ export const getAssignedQueue = async (req: Request, res: Response, next: NextFu
     };
 
     // If staff is assigned to specific department, filter by it
-    // If departmentId is provided in query, use that (must match staff's dept if assigned)
     if (staff.departmentId) {
       where.departmentId = staff.departmentId;
     } else if (departmentId) {
       where.departmentId = departmentId;
+    }
+
+    // Filter by doctorId if provided
+    if (doctorId) {
+      where.doctorId = doctorId;
     }
 
     const appointments = await prisma.appointment.findMany({
@@ -59,8 +63,9 @@ export const getAssignedQueue = async (req: Request, res: Response, next: NextFu
       include: {
         user: { select: { id: true, name: true, email: true } },
         department: { select: { id: true, name: true } },
+        doctor: { select: { id: true, name: true } },
         queue: true,
-      },
+      } as any,
       orderBy: [
         { isEmergency: 'desc' },
         { tokenNumber: 'asc' }
@@ -92,7 +97,13 @@ export const callNextToken = async (req: Request, res: Response, next: NextFunct
       return;
     }
 
-    const { departmentId } = req.body;
+    const { departmentId, doctorId } = req.body;
+    const targetDoctorId = doctorId; // No longer defaults to staff.id
+
+    if (!targetDoctorId) {
+        res.status(400).json({ message: 'Doctor ID is required to call next token' });
+        return;
+    }
 
     // Verify department access
     if (staff.departmentId && departmentId !== staff.departmentId) {
@@ -103,10 +114,11 @@ export const callNextToken = async (req: Request, res: Response, next: NextFunct
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Find next waiting appointment
+    // Find next waiting appointment for this doctor
     const nextAppointment = await prisma.appointment.findFirst({
       where: {
         departmentId: departmentId || staff.departmentId,
+        doctorId: targetDoctorId,
         organizationId: staff.organizationId,
         date: {
           gte: today,
@@ -125,7 +137,7 @@ export const callNextToken = async (req: Request, res: Response, next: NextFunct
     });
 
     if (!nextAppointment) {
-      res.status(404).json({ message: 'No waiting appointments in queue' });
+      res.status(404).json({ message: 'No waiting appointments in queue for this doctor' });
       return;
     }
 
@@ -144,11 +156,13 @@ export const callNextToken = async (req: Request, res: Response, next: NextFunct
         appointmentId: nextAppointment.id,
         tokenNumber: nextAppointment.tokenNumber,
         departmentId: nextAppointment.departmentId,
+        doctorId: nextAppointment.doctorId,
       });
       io.emit('queueUpdate', {
         departmentId: nextAppointment.departmentId,
         organizationId: nextAppointment.organizationId,
         date: nextAppointment.date,
+        doctorId: nextAppointment.doctorId,
       });
     }
 
@@ -179,7 +193,13 @@ export const pauseQueue = async (req: Request, res: Response, next: NextFunction
       return;
     }
 
-    const { departmentId } = req.body;
+    const { departmentId, doctorId } = req.body;
+    const targetDoctorId = doctorId;
+
+    if (!targetDoctorId) {
+        res.status(400).json({ message: 'Doctor ID is required to pause queue' });
+        return;
+    }
 
     // Verify department access
     if (staff.departmentId && departmentId !== staff.departmentId) {
@@ -190,12 +210,13 @@ export const pauseQueue = async (req: Request, res: Response, next: NextFunction
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Update all WAITING queues to PAUSED
+    // Update all WAITING queues to PAUSED for this doctor
     const result = await prisma.queue.updateMany({
       where: {
         status: QueueStatus.WAITING,
         appointment: {
           departmentId: departmentId || staff.departmentId,
+          doctorId: targetDoctorId,
           organizationId: staff.organizationId,
           date: {
             gte: today,
@@ -212,6 +233,7 @@ export const pauseQueue = async (req: Request, res: Response, next: NextFunction
       io.emit('queuePaused', {
         departmentId: departmentId || staff.departmentId,
         organizationId: staff.organizationId,
+        doctorId: targetDoctorId,
       });
     }
 
@@ -242,7 +264,13 @@ export const resumeQueue = async (req: Request, res: Response, next: NextFunctio
       return;
     }
 
-    const { departmentId } = req.body;
+    const { departmentId, doctorId } = req.body;
+    const targetDoctorId = doctorId;
+
+    if (!targetDoctorId) {
+        res.status(400).json({ message: 'Doctor ID is required to resume queue' });
+        return;
+    }
 
     // Verify department access
     if (staff.departmentId && departmentId !== staff.departmentId) {
@@ -253,12 +281,13 @@ export const resumeQueue = async (req: Request, res: Response, next: NextFunctio
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // Update all PAUSED queues to WAITING
+    // Update all PAUSED queues to WAITING for this doctor
     const result = await prisma.queue.updateMany({
       where: {
         status: QueueStatus.PAUSED,
         appointment: {
           departmentId: departmentId || staff.departmentId,
+          doctorId: targetDoctorId,
           organizationId: staff.organizationId,
           date: {
             gte: today,
@@ -275,6 +304,7 @@ export const resumeQueue = async (req: Request, res: Response, next: NextFunctio
       io.emit('queueResumed', {
         departmentId: departmentId || staff.departmentId,
         organizationId: staff.organizationId,
+        doctorId: targetDoctorId,
       });
     }
 
@@ -432,6 +462,7 @@ export const updateAppointmentStatus = async (req: Request, res: Response, next:
         departmentId: updatedAppointment.departmentId,
         organizationId: updatedAppointment.organizationId,
         date: updatedAppointment.date,
+        doctorId: updatedAppointment.doctorId,
       });
     }
 
@@ -504,6 +535,7 @@ export const markNoShow = async (req: Request, res: Response, next: NextFunction
         departmentId: updatedAppointment.departmentId,
         organizationId: updatedAppointment.organizationId,
         date: updatedAppointment.date,
+        doctorId: updatedAppointment.doctorId,
       });
     }
 
@@ -540,11 +572,20 @@ export const getStaffDashboard = async (req: Request, res: Response, next: NextF
       return;
     }
 
+    const { doctorId } = req.query;
+    const targetDoctorId = doctorId as string;
+
+    if (!targetDoctorId) {
+        res.status(400).json({ message: 'Doctor ID is required for dashboard' });
+        return;
+    }
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     const where: any = {
       organizationId: staff.organizationId,
+      doctorId: targetDoctorId,
       date: {
         gte: today,
         lt: new Date(today.getTime() + 24 * 60 * 60 * 1000),
